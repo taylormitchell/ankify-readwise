@@ -3,16 +3,16 @@ import dotenv from "dotenv";
 import fs from "fs";
 import invariant from "tiny-invariant";
 import path from "path";
-// const filedir = path.dirname(new URL(import.meta.url).pathname);
-// dotenv.config({ path: path.join(filedir, ".env") });
 dotenv.config();
 
 const user = process.env.AMAZON_USER;
 invariant(user, "Missing USER env variable!");
 const pass = process.env.AMAZON_PASS;
 invariant(pass, "Missing PASS env variable!");
+const dataDir = process.env.DATA_DIR;
+const url = "https://read.amazon.com/notebook";
 
-async function getAnnotations() {
+export async function getAnnotations(limit = 10) {
   console.log("Opening browser");
   const browser = await puppeteer.launch({ headless: true });
   const page = await browser.newPage();
@@ -22,7 +22,7 @@ async function getAnnotations() {
   //   });
 
   console.log("Going to amazon");
-  await page.goto("https://read.amazon.com/notebook");
+  await page.goto(url);
   await page.waitForSelector('form[name="signIn"]');
 
   console.log("Logging in");
@@ -36,7 +36,7 @@ async function getAnnotations() {
   console.log("Getting books");
   let books = {};
   const indexElements = await page.$$("#kp-notebook-library > div");
-  for (const element of indexElements.slice(0, 3)) {
+  for (const element of indexElements.slice(0, limit)) {
     // Get book info
     let book = await page.evaluate((el) => {
       return {
@@ -72,35 +72,18 @@ async function getAnnotations() {
   return books;
 }
 
-async function downloadAnnotations() {
+export async function downloadAnnotations() {
   const books = await getAnnotations();
-  const name = `books-${new Date().toISOString().slice(0, 10)}.json`;
-  fs.writeFileSync(path.join("data", name), JSON.stringify(books, null, 2));
+  const res = {
+    books,
+    account: user,
+    snapshotDate: new Date().toISOString(),
+    source: url,
+  };
+  const name = `books-${res.snapshotDate}.json`;
+  fs.writeFileSync(path.join(dataDir, name), JSON.stringify(res, null, 2));
 }
 
-function getDiff(curr, prev) {
-  const diff = Object.entries(curr).reduce((acc, [bookId, book]) => {
-    let hasNew = false;
-    const newBook = { ...book, annotations: {} };
-    for (const [annotationId, annotation] of Object.entries(book.annotations)) {
-      if (!prev?.[bookId]?.annotations[annotationId]) {
-        newBook.annotations[annotationId] = annotation;
-        hasNew = true;
-      }
-    }
-    const res = { ...acc };
-    if (hasNew) res[bookId] = newBook;
-    return res;
-  }, {});
-  return diff;
+if (import.meta.url === `file://${process.argv[1]}`) {
+  downloadAnnotations();
 }
-
-function calcDiff() {
-  const prev = JSON.parse(fs.readFileSync("data/books-2023-03-30.json"));
-  const curr = JSON.parse(fs.readFileSync("data/books-2023-03-31.json"));
-  const diff = getDiff(curr, prev);
-  fs.writeFileSync("diff.json", JSON.stringify(diff, null, 2));
-}
-
-// downloadAnnotations();
-calcDiff();
