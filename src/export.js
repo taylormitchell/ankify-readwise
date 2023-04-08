@@ -11,10 +11,11 @@ const pass = process.env.AMAZON_PASS;
 invariant(pass, "Missing PASS env variable!");
 const dataDir = process.env.DATA_DIR;
 const url = "https://read.amazon.com/notebook";
+let headless = process.env.HEADLESS ? process.env.HEADLESS === "true" : true;
 
 export async function getAnnotations(limit = 10) {
   console.log("Opening browser");
-  const browser = await puppeteer.launch({ headless: true });
+  const browser = await puppeteer.launch({ headless });
   const page = await browser.newPage();
   page.setDefaultTimeout(60_000);
   //   await page._client.send("Page.setDownloadBehavior", {
@@ -36,6 +37,7 @@ export async function getAnnotations(limit = 10) {
   console.log("Getting books");
   let books = {};
   const indexElements = await page.$$("#kp-notebook-library > div");
+  await page.waitForTimeout(2000);
   for (const element of indexElements.slice(0, limit)) {
     // Get book info
     let book = await page.evaluate((el) => {
@@ -46,7 +48,6 @@ export async function getAnnotations(limit = 10) {
       };
     }, element);
     // Click on book
-    await page.waitForTimeout(200);
     await element.click();
     // await page.waitForTimeout(1000);
     await page.waitForSelector("#kp-notebook-annotations-pane > div");
