@@ -3,6 +3,7 @@ import fs from "fs";
 import invariant from "tiny-invariant";
 import path from "path";
 import fetch from "node-fetch";
+import { getDefinition } from "./dictionary.js";
 dotenv.config();
 
 const dataDir = process.env.DATA_DIR;
@@ -53,14 +54,15 @@ async function anki(action, params) {
   return await res.json();
 }
 
-async function upsertFlashcard(flashcard) {
-  const { result, error } = await anki("findNotes", { query: `SourceId:${flashcard.SourceId}` });
+async function upsertFlashcard(note) {
+  const { fields } = note;
+  const { result, error } = await anki("findNotes", { query: `SourceId:${fields.SourceId}` });
   const noteId = result[0];
   if (noteId) {
     const res = await anki("updateNoteFields", {
       note: {
         id: noteId,
-        fields: flashcard,
+        fields: note,
       },
     });
     if (res.error) {
@@ -71,8 +73,9 @@ async function upsertFlashcard(flashcard) {
       note: {
         deckName: "2-Recent",
         modelName: "Basic (synced)",
-        fields: flashcard,
+        fields: { Front: "", Back: "", SourceId: "" },
         options: { allowDuplicate: false },
+        ...note,
       },
     });
     if (res.error) {
@@ -81,20 +84,22 @@ async function upsertFlashcard(flashcard) {
   }
 }
 
-async function insertFlashcard(flashcard) {
-  const { result, error } = await anki("findNotes", { query: `SourceId:${flashcard.SourceId}` });
+async function insertFlashcard(note) {
+  const { fields } = note;
+  const { result, error } = await anki("findNotes", { query: `SourceId:${fields.SourceId}` });
   const noteId = result[0];
   if (error) {
     console.log(error);
   } else if (noteId) {
-    console.debug(`Skipping ${flashcard.SourceId} because it already exists`);
+    console.debug(`Skipping ${fields.SourceId} because it already exists`);
   } else {
     const res = await anki("addNote", {
       note: {
         deckName: "2-Recent",
         modelName: "Basic (synced)",
-        fields: flashcard,
+        fields: { Front: "", Back: "", SourceId: "" },
         options: { allowDuplicate: false },
+        ...note,
       },
     });
     if (res.error) {
@@ -104,26 +109,43 @@ async function insertFlashcard(flashcard) {
 }
 
 async function ankifyChanges(changes) {
-  const flashcards = [];
+  const notes = [];
   for (const change of changes) {
     if (change.type === "book") {
-      flashcards.push({
-        Front: `Who's the author of ${change.data.title}?`,
-        Back: change.data.author,
-        SourceId: `author-${change.data.id}`,
+      notes.push({
+        fields: {
+          Front: `Who's the author of ${change.data.title}?`,
+          Back: change.data.author,
+          SourceId: `author-${change.data.id}`,
+        },
       });
     }
     if (change.type === "annotation") {
       const note = change.data.note || "";
+      const title = `<i style="font-size: 0.9rem; color: rgba(0, 0, 0, 0.5)">${change.data.book.title}</i>`;
+      const highlight = change.data.highlight || "";
       const lines = note.split("\n");
-      if (note === "q") {
+      if (note.match(/^[qQ]$/)) {
         // Ankify highlight
-        flashcards.push({
-          Front: [`<i>${change.data.book.title}</i>`, `<i>${change.data.highlight}</i>`].join(
-            "<br>"
-          ),
-          Back: "",
-          SourceId: `highlight-${change.data.id}`,
+        notes.push({
+          fields: {
+            Front: [title, highlight].join("<br>"),
+            Back: "",
+            SourceId: `highlight-${change.data.id}`,
+          },
+        });
+      } else if (note.match(/^[dD]$/)) {
+        // Ankify definition
+        let word = change.data.highlight;
+        word = word[0].toUpperCase() + word.slice(1);
+        const { definition, examples } = await getDefinition(word);
+        notes.push({
+          modelName: "Vocab.2023-04-08",
+          fields: {
+            Word: word,
+            Definition: definition,
+            Examples: examples.join("<br>"),
+          },
         });
       } else if (lines.length === 2 && lines[0].startsWith("Q:") && lines[1].startsWith("A:")) {
         // Ankify question
@@ -131,15 +153,17 @@ async function ankifyChanges(changes) {
         const title = `<i style="font-size: 0.9rem; color: rgba(0, 0, 0, 0.5)">${change.data.book.title}</i>`;
         const question = lines[0].slice(2).trim();
         const answer = lines[1].slice(2).trim();
-        flashcards.push({
-          Front: [title, question].join("<br>"),
-          Back: answer,
-          SourceId: `question-${change.data.id}`,
+        notes.push({
+          fields: {
+            Front: [title, question].join("<br>"),
+            Back: answer,
+            SourceId: `question-${change.data.id}`,
+          },
         });
       }
     }
   }
-  for (const flashcard of flashcards) {
+  for (const flashcard of notes) {
     await insertFlashcard(flashcard);
   }
 }
