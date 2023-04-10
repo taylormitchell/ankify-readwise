@@ -1,41 +1,11 @@
 import dotenv from "dotenv";
 import fs from "fs";
-import invariant from "tiny-invariant";
-import path from "path";
 import fetch from "node-fetch";
+import path from "path";
 import { getDefinition } from "./dictionary.js";
 dotenv.config();
 
-const dataDir = process.env.DATA_DIR;
-invariant(dataDir, "Missing DATA_DIR env variable!");
-
-// Find new books and annotations
-
-function getChanges(curr, prev) {
-  const changes = [];
-  Object.entries(curr).forEach(([bookId, book]) => {
-    if (!prev?.[bookId]) {
-      changes.push({ type: "book", data: book });
-    }
-    for (const [annotationId, annotation] of Object.entries(book.annotations)) {
-      if (!prev?.[bookId]?.annotations[annotationId]) {
-        changes.push({ type: "annotation", data: { ...annotation, book } });
-      }
-    }
-  });
-  return changes;
-}
-
-function getLatestChanges() {
-  const files = fs
-    .readdirSync(dataDir)
-    .filter((n) => n.startsWith("books"))
-    .sort()
-    .reverse();
-  const curr = JSON.parse(fs.readFileSync(path.join(dataDir, files[0])));
-  const prev = JSON.parse(fs.readFileSync(path.join(dataDir, files[1])));
-  return getChanges(curr.books, prev.books);
-}
+const LAST_RUN_FILE = path.resolve(process.env.LAST_RUN_FILE);
 
 // Anki
 
@@ -54,124 +24,125 @@ async function anki(action, params) {
   return await res.json();
 }
 
-async function upsertFlashcard(note) {
-  const { fields } = note;
-  const { result, error } = await anki("findNotes", { query: `SourceId:${fields.SourceId}` });
-  const noteId = result[0];
-  if (noteId) {
-    const res = await anki("updateNoteFields", {
-      note: {
-        id: noteId,
-        fields: note,
-      },
-    });
-    if (res.error) {
-      console.log(res.error);
-    }
-  } else {
-    const res = await anki("addNote", {
-      note: {
-        deckName: "2-Recent",
-        modelName: "Basic (synced)",
-        fields: { Front: "", Back: "", SourceId: "" },
-        options: { allowDuplicate: false },
-        ...note,
-      },
-    });
-    if (res.error) {
-      console.log(res.error);
-    }
-  }
-}
-
 async function insertFlashcard(note) {
-  const { fields } = note;
-  const { result, error } = await anki("findNotes", { query: `SourceId:${fields.SourceId}` });
-  const noteId = result[0];
-  if (error) {
-    console.log(error);
-  } else if (noteId) {
-    console.debug(`Skipping ${fields.SourceId} because it already exists`);
-  } else {
-    const res = await anki("addNote", {
-      note: {
-        deckName: "2-Recent",
-        modelName: "Basic (synced)",
-        fields: { Front: "", Back: "", SourceId: "" },
-        options: { allowDuplicate: false },
-        ...note,
-      },
-    });
-    if (res.error) {
-      console.log(res.error);
-    }
+  // const { fields } = note;
+  // const { result, error } = await anki("findNotes", { query: `SourceId:${fields.SourceId}` });
+  // const noteId = result[0];
+  // if (error) {
+  //   console.log(error);
+  // } else if (noteId) {
+  //   console.debug(`Skipping ${fields.SourceId} because it already exists`);
+  // } else {
+  const res = await anki("addNote", {
+    note: {
+      deckName: "2-Recent",
+      modelName: "Basic (synced)",
+      fields: { Front: "", Back: "", SourceId: "" },
+      options: { allowDuplicate: false },
+      ...note,
+    },
+  });
+  if (res.error) {
+    console.log(res.error);
   }
+  // }
 }
 
-async function ankifyChanges(changes) {
-  const notes = [];
-  for (const change of changes) {
-    if (change.type === "book") {
-      notes.push({
+function getKindleUrl(asin, location) {
+  return `kindle://book?action=open&asin=${asin}&location=${location}`;
+}
+
+export async function ankifyRecent() {
+  // Get highlights since last run
+  const lastRun = fs.existsSync(LAST_RUN_FILE) ? fs.readFileSync(LAST_RUN_FILE, "utf8") : 0;
+
+  // Get highlights and books from Readwise
+  let highlights = await fetch("https://readwise.io/api/v2/highlights/", {
+    method: "GET",
+    headers: {
+      Authorization: `Token ${process.env.READWISE_API_KEY}`,
+    },
+  })
+    .then((res) => res.json())
+    .then((res) => res.results);
+  let books = await fetch("https://readwise.io/api/v2/books/", {
+    method: "GET",
+    headers: {
+      Authorization: `Token ${process.env.READWISE_API_KEY}`,
+    },
+  })
+    .then((res) => res.json())
+    .then((res) => res.results);
+
+  // Filter highlights and books to only those since last run
+  const recentHighlights = highlights.filter((h) => h.highlighted_at > lastRun);
+  const recentBooks = books.filter((b) => b.last_highlight_at > lastRun);
+
+  // Convert highlights to Anki notes
+  const ankiNotes = [];
+  for (const h of recentHighlights) {
+    const book = books.find((b) => b.id === h.book_id);
+    const note = h.note || "";
+    const title = `<i style="font-size: 0.9rem; color: rgba(0, 0, 0, 0.5)">${book.title}</i>`;
+    const text = h.text || "";
+    const source_url = book.source_url || getKindleUrl(book.asin, book.location);
+    const lines = note.split("\n");
+    if (note.match(/^[qQ]$/)) {
+      // Ankify highlight
+      ankiNotes.push({
         fields: {
-          Front: `Who's the author of ${change.data.title}?`,
-          Back: change.data.author,
-          SourceId: `author-${change.data.id}`,
+          Front: [title, text].join("<br>"),
+          Back: "",
+          SourceId: source_url,
+        },
+      });
+    } else if (note.match(/^[dD]$/)) {
+      // Ankify definition
+      let word = text;
+      word = word[0].toUpperCase() + word.slice(1);
+      const { definition, examples } = await getDefinition(word);
+      ankiNotes.push({
+        modelName: "Vocab.2023-04-08",
+        fields: {
+          Word: word,
+          Definition: definition,
+          Examples: examples.join("<br>"),
+        },
+      });
+    } else if (lines.length === 2 && lines[0].startsWith("Q:") && lines[1].startsWith("A:")) {
+      // Ankify question
+      // title at 0.75rem and slightly transparent
+      const title = `<i style="font-size: 0.9rem; color: rgba(0, 0, 0, 0.5)">${book.title}</i>`;
+      const question = lines[0].slice(2).trim();
+      const answer = lines[1].slice(2).trim();
+      ankiNotes.push({
+        fields: {
+          Front: [title, question].join("<br>"),
+          Back: answer,
+          SourceId: source_url,
         },
       });
     }
-    if (change.type === "annotation") {
-      const note = change.data.note || "";
-      const title = `<i style="font-size: 0.9rem; color: rgba(0, 0, 0, 0.5)">${change.data.book.title}</i>`;
-      const highlight = change.data.highlight || "";
-      const lines = note.split("\n");
-      if (note.match(/^[qQ]$/)) {
-        // Ankify highlight
-        notes.push({
-          fields: {
-            Front: [title, highlight].join("<br>"),
-            Back: "",
-            SourceId: `highlight-${change.data.id}`,
-          },
-        });
-      } else if (note.match(/^[dD]$/)) {
-        // Ankify definition
-        let word = change.data.highlight;
-        word = word[0].toUpperCase() + word.slice(1);
-        const { definition, examples } = await getDefinition(word);
-        notes.push({
-          modelName: "Vocab.2023-04-08",
-          fields: {
-            Word: word,
-            Definition: definition,
-            Examples: examples.join("<br>"),
-          },
-        });
-      } else if (lines.length === 2 && lines[0].startsWith("Q:") && lines[1].startsWith("A:")) {
-        // Ankify question
-        // title at 0.75rem and slightly transparent
-        const title = `<i style="font-size: 0.9rem; color: rgba(0, 0, 0, 0.5)">${change.data.book.title}</i>`;
-        const question = lines[0].slice(2).trim();
-        const answer = lines[1].slice(2).trim();
-        notes.push({
-          fields: {
-            Front: [title, question].join("<br>"),
-            Back: answer,
-            SourceId: `question-${change.data.id}`,
-          },
-        });
-      }
-    }
   }
-  for (const flashcard of notes) {
-    await insertFlashcard(flashcard);
+  for (const book of recentBooks) {
+    const source_url = book.source_url || getKindleUrl(book.asin, book.location);
+    ankiNotes.push({
+      fields: {
+        Front: `Who's the author of ${book.title}?`,
+        Back: book.author,
+        SourceId: source_url,
+      },
+    });
   }
-}
 
-export async function ankifyLatest() {
-  await ankifyChanges(getLatestChanges());
+  // Insert notes into Anki
+  for (const note of ankiNotes) {
+    await insertFlashcard(note);
+  }
+
+  fs.writeFileSync(LAST_RUN_FILE, new Date().toISOString());
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  ankifyLatest();
+  ankifyRecent();
 }

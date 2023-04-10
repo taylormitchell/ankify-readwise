@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "node src/index.js",
     "start": "cd dist && node index.js",
-    "build": "source ./scripts/build.sh"
+    "deploy": "source ./scripts/deploy.sh"
   },
   "keywords": [],
   "author": "",

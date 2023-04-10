@@ -1,5 +1,3 @@
-import { downloadAnnotations } from "./export.js";
-import { ankifyLatest } from "./ankify.js";
+import { ankifyRecent } from "./ankify.js";
 
-await downloadAnnotations();
-await ankifyLatest();
+await ankifyRecent();
