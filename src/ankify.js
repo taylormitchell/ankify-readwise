@@ -53,10 +53,12 @@ function getKindleUrl(asin, location) {
 }
 
 export async function ankifyRecent() {
+  console.log("Ankifying recent highlights");
+
   // Get highlights since last run
   const lastRun = fs.existsSync(LAST_RUN_FILE) ? fs.readFileSync(LAST_RUN_FILE, "utf8") : 0;
 
-  // Get highlights and books from Readwise
+  console.log("Fetching highlights and books from Readwise");
   let highlights = await fetch("https://readwise.io/api/v2/highlights/", {
     method: "GET",
     headers: {
@@ -74,11 +76,11 @@ export async function ankifyRecent() {
     .then((res) => res.json())
     .then((res) => res.results);
 
-  // Filter highlights and books to only those since last run
+  console.log("Filtering highlights and books since last run");
   const recentHighlights = highlights.filter((h) => h.highlighted_at > lastRun);
   const recentBooks = books.filter((b) => b.last_highlight_at > lastRun);
 
-  // Convert highlights to Anki notes
+  console.log("Converting highlights to Anki notes");
   const ankiNotes = [];
   for (const h of recentHighlights) {
     const book = books.find((b) => b.id === h.book_id);
@@ -135,12 +137,13 @@ export async function ankifyRecent() {
     });
   }
 
-  // Insert notes into Anki
+  console.log("Inserting notes into Anki");
   for (const note of ankiNotes) {
     await insertFlashcard(note);
   }
 
   fs.writeFileSync(LAST_RUN_FILE, new Date().toISOString());
+  console.log("Done");
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
