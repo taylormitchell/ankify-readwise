@@ -111,19 +111,26 @@ export async function ankifyRecent() {
           Examples: examples.join("<br>"),
         },
       });
-    } else if (lines.length === 2 && lines[0].startsWith("Q:") && lines[1].startsWith("A:")) {
-      // Ankify question
-      // title at 0.75rem and slightly transparent
-      const title = `<i style="font-size: 0.9rem; color: rgba(0, 0, 0, 0.5)">${book.title}</i>`;
-      const question = lines[0].slice(2).trim();
-      const answer = lines[1].slice(2).trim();
-      ankiNotes.push({
-        fields: {
-          Front: [title, question].join("<br>"),
-          Back: answer,
-          SourceId: source_url,
-        },
-      });
+    } else {
+      let i = 0;
+      while (i < lines.length - 1) {
+        if (lines[i].startsWith("Q:") && lines[i + 1].startsWith("A:")) {
+          // Ankify question
+          // title at 0.75rem and slightly transparent
+          const title = `<i style="font-size: 0.9rem; color: rgba(0, 0, 0, 0.5)">${book.title}</i>`;
+          const question = lines[i].slice(2).trim();
+          const answer = lines[i + 1].slice(2).trim();
+          ankiNotes.push({
+            fields: {
+              Front: [title, question].join("<br>"),
+              Back: answer,
+              SourceId: source_url,
+            },
+          });
+          i += 2;
+        }
+        i++;
+      }
     }
   }
   for (const book of recentBooks) {
