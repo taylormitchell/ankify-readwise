@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "node src/index.js",
     "start": "cd dist && node index.js",
-    "deploy": "source ./scripts/deploy.sh"
+    "deploy": "source ./scripts/deploy.sh",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js"
   },
   "keywords": [],
   "author": "",
@@ -19,5 +20,8 @@
     "openai": "^3.2.1",
     "puppeteer": "^10.0.0",
     "tiny-invariant": "^1.3.1"
+  },
+  "devDependencies": {
+    "jest": "^29.5.0"
   }
 }
