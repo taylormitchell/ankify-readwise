@@ -52,6 +52,25 @@ function getKindleUrl(asin, location) {
   return `kindle://book?action=open&asin=${asin}&location=${location}`;
 }
 
+export function parseQuestions(text) {
+  const res = [];
+  const lines = text.split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const current = lines[i];
+    const next = lines[i + 1] || "";
+    if (!current.startsWith("Q:")) {
+      i++;
+      continue;
+    }
+    const question = current.slice(2).trim();
+    const answer = next.startsWith("A:") ? next.slice(2).trim() : "";
+    res.push({ question, answer });
+    i += answer ? 2 : 1;
+  }
+  return res;
+}
+
 export async function ankifyRecent() {
   console.log("Ankifying recent highlights");
 
@@ -82,25 +101,31 @@ export async function ankifyRecent() {
 
   console.log("Converting highlights to Anki notes");
   const ankiNotes = [];
-  for (const h of recentHighlights) {
-    const book = books.find((b) => b.id === h.book_id);
-    const note = h.note || "";
+  for (const highlight of recentHighlights) {
+    const book = books.find((b) => b.id === highlight.book_id);
+    const note = highlight.note || "";
     const title = `<i style="font-size: 0.9rem; color: rgba(0, 0, 0, 0.5)">${book.title}</i>`;
-    const text = h.text || "";
+    // Remove leading and trailing non-word characters
+    const textTrimmed = (highlight.text || "").replace(/^\W+|\W+$/g, "");
     const source_url = book.source_url || getKindleUrl(book.asin, book.location);
-    const lines = note.split("\n");
-    if (note.match(/^[qQ]$/)) {
-      // Ankify highlight
-      ankiNotes.push({
-        fields: {
-          Front: [title, text].join("<br>"),
-          Back: "",
-          SourceId: source_url,
-        },
-      });
-    } else if (note.match(/^[dD]$/)) {
-      // Ankify definition
-      let word = text;
+
+    const qas = parseQuestions(note);
+    // Question and answer -> Ankify as question card
+    if (qas.length > 0) {
+      for (const { question, answer } of qas) {
+        ankiNotes.push({
+          fields: {
+            Front: [title, question].join("<br>"),
+            Back: answer,
+            SourceId: source_url,
+          },
+        });
+      }
+    }
+    // Single word highlights or "d" for dictionary -> Ankify as vocabulary card
+    else if (textTrimmed.match(/^\S+$/) | note.match(/^[dD]$/)) {
+      // Ankify vocabulary
+      let word = textTrimmed;
       word = word[0].toUpperCase() + word.slice(1);
       const { definition, examples } = await getDefinition(word);
       ankiNotes.push({
@@ -111,26 +136,16 @@ export async function ankifyRecent() {
           Examples: examples.join("<br>"),
         },
       });
-    } else {
-      let i = 0;
-      while (i < lines.length - 1) {
-        if (lines[i].startsWith("Q:") && lines[i + 1].startsWith("A:")) {
-          // Ankify question
-          // title at 0.75rem and slightly transparent
-          const title = `<i style="font-size: 0.9rem; color: rgba(0, 0, 0, 0.5)">${book.title}</i>`;
-          const question = lines[i].slice(2).trim();
-          const answer = lines[i + 1].slice(2).trim();
-          ankiNotes.push({
-            fields: {
-              Front: [title, question].join("<br>"),
-              Back: answer,
-              SourceId: source_url,
-            },
-          });
-          i += 2;
-        }
-        i++;
-      }
+    }
+    // "q" for question -> Ankify highlight text as question card
+    else if (note.match(/^[qQ]$/)) {
+      ankiNotes.push({
+        fields: {
+          Front: [title, textTrimmed].join("<br>"),
+          Back: "",
+          SourceId: source_url,
+        },
+      });
     }
   }
   for (const book of recentBooks) {
