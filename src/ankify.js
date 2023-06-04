@@ -2,7 +2,7 @@ import dotenv from "dotenv";
 import fs from "fs";
 import fetch from "node-fetch";
 import path from "path";
-import { getDefinition } from "./dictionary.js";
+import { getDefinitions } from "./dictionary.js";
 dotenv.config();
 
 const LAST_RUN_FILE = path.resolve(process.env.LAST_RUN_FILE);
@@ -101,6 +101,7 @@ export async function ankifyRecent() {
 
   console.log("Converting highlights to Anki notes");
   const ankiNotes = [];
+  const vocabWords = new Set();
   for (const highlight of recentHighlights) {
     const book = books.find((b) => b.id === highlight.book_id);
     const note = highlight.note || "";
@@ -123,19 +124,9 @@ export async function ankifyRecent() {
       }
     }
     // Single word highlights or "d" for dictionary -> Ankify as vocabulary card
-    else if (textTrimmed.match(/^\S+$/) | note.match(/^[dD]$/)) {
-      // Ankify vocabulary
-      let word = textTrimmed;
-      word = word[0].toUpperCase() + word.slice(1);
-      const { definition, examples } = await getDefinition(word);
-      ankiNotes.push({
-        modelName: "Vocab.2023-04-08",
-        fields: {
-          Word: word,
-          Definition: definition,
-          Examples: examples.join("<br>"),
-        },
-      });
+    else if (textTrimmed.match(/^\S+$/) || note.match(/^[dD]$/)) {
+      // Collect all vocab words to look up definitions in bulk
+      vocabWords.add(textTrimmed);
     }
     // "q" for question -> Ankify highlight text as question card
     else if (note.match(/^[qQ]$/)) {
@@ -148,6 +139,20 @@ export async function ankifyRecent() {
       });
     }
   }
+  // Look up definitions for all vocab words in bulk
+  const definitions = await getDefinitions(Array.from(vocabWords));
+  // Convert vocab words to Anki notes
+  for (const definition of definitions) {
+    ankiNotes.push({
+      modelName: "Vocab.2023-04-08",
+      fields: {
+        Word: definition.word,
+        Definition: definition.definition,
+        Examples: definition.examples.join("<br>"),
+      },
+    });
+  }
+
   for (const book of recentBooks) {
     const source_url = book.source_url || getKindleUrl(book.asin, book.location);
     ankiNotes.push({
