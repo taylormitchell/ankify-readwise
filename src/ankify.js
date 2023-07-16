@@ -2,7 +2,8 @@ import dotenv from "dotenv";
 import fs from "fs";
 import fetch from "node-fetch";
 import path from "path";
-import { getDefinitions } from "./dictionary.js";
+// import { getDefinitions } from "./dictionary.js";
+import { annotationsToItems } from "./gpt.js";
 dotenv.config();
 
 const LAST_RUN_FILE = path.resolve(process.env.LAST_RUN_FILE);
@@ -75,7 +76,10 @@ export async function ankifyRecent() {
   console.log("Ankifying recent highlights");
 
   // Get highlights since last run
-  const lastRun = fs.existsSync(LAST_RUN_FILE) ? fs.readFileSync(LAST_RUN_FILE, "utf8") : 0;
+  // const lastRun = fs.existsSync(LAST_RUN_FILE) ? fs.readFileSync(LAST_RUN_FILE, "utf8") : 0;
+  // iso string 1 week ago
+  const lastRun = new Date(Date.now() - 1000 * 60 * 60 * 24 * 2).toISOString();
+  // const lastRun = Date.now() - 1000 * 60 * 60 * 24 * 7; // 1 week ago
 
   console.log("Fetching highlights and books from Readwise");
   let highlights = await fetch("https://readwise.io/api/v2/highlights/", {
@@ -96,63 +100,51 @@ export async function ankifyRecent() {
     .then((res) => res.results);
 
   console.log("Filtering highlights and books since last run");
-  const recentHighlights = highlights.filter((h) => h.highlighted_at > lastRun);
+  let recentHighlights = highlights.filter((h) => h.highlighted_at > lastRun).slice(0, 10);
+  recentHighlights = recentHighlights.slice(0, 10); // temp
   const recentBooks = books.filter((b) => b.last_highlight_at > lastRun);
 
-  console.log("Converting highlights to Anki notes");
+  console.log("Create items from annotations");
   const ankiNotes = [];
-  const vocabWords = new Set();
-  for (const highlight of recentHighlights) {
-    const book = books.find((b) => b.id === highlight.book_id);
-    const note = highlight.note || "";
-    const title = `<i style="font-size: 0.9rem; color: rgba(0, 0, 0, 0.5)">${book.title}</i>`;
-    // Remove leading and trailing non-word characters
-    const textTrimmed = (highlight.text || "").replace(/^\W+|\W+$/g, "");
-    const source_url = book.source_url || getKindleUrl(book.asin, book.location);
+  const annotations = recentHighlights.map((h) => {
+    const book = books.find((b) => b.id === h.book_id);
+    const note = h.note || "";
+    return {
+      passage: h.text,
+      note,
+      title: book.title,
+      author: book.author,
+      uri: book.source_url || getKindleUrl(book.asin, book.location),
+    };
+  });
+  const items = await annotationsToItems(annotations);
 
-    const qas = parseQuestions(note);
-    // Question and answer -> Ankify as question card
-    if (qas.length > 0) {
-      for (const { question, answer } of qas) {
-        ankiNotes.push({
-          fields: {
-            Front: [title, question].join("<br>"),
-            Back: answer,
-            SourceId: source_url,
-          },
-        });
-      }
-    }
-    // Single word highlights or "d" for dictionary -> Ankify as vocabulary card
-    else if (textTrimmed.match(/^\S+$/) || note.match(/^[dD]$/)) {
-      // Collect all vocab words to look up definitions in bulk
-      vocabWords.add(textTrimmed);
-    }
-    // "q" for question -> Ankify highlight text as question card
-    else if (note.match(/^[qQ]$/)) {
+  console.log("Mapping items to Anki notes");
+  for (const item of items) {
+    const titleHTML = `<i style="font-size: 0.9rem; color: rgba(0, 0, 0, 0.5)">${item.title}</i>`;
+    if (item.type === "definition") {
       ankiNotes.push({
+        modelName: "Vocab.2023-04-08",
         fields: {
-          Front: [title, textTrimmed].join("<br>"),
-          Back: "",
-          SourceId: source_url,
+          Word: item.word,
+          Definition: item.definition,
+          Examples: item.examples.join("<br>"),
         },
       });
+    } else if (item.type === "flashcard") {
+      ankiNotes.push({
+        fields: {
+          Front: [titleHTML, item.q].join("<br>"),
+          Back: item.A,
+          SourceId: item.uri,
+        },
+      });
+    } else {
+      console.log("Skipping item of type " + item.type);
     }
   }
-  // Look up definitions for all vocab words in bulk
-  const definitions = await getDefinitions(Array.from(vocabWords));
-  // Convert vocab words to Anki notes
-  for (const definition of definitions) {
-    ankiNotes.push({
-      modelName: "Vocab.2023-04-08",
-      fields: {
-        Word: definition.word,
-        Definition: definition.definition,
-        Examples: definition.examples.join("<br>"),
-      },
-    });
-  }
 
+  console.log("Creating Anki notes from recent books");
   for (const book of recentBooks) {
     const source_url = book.source_url || getKindleUrl(book.asin, book.location);
     ankiNotes.push({
@@ -164,13 +156,13 @@ export async function ankifyRecent() {
     });
   }
 
-  console.log("Inserting notes into Anki");
-  for (const note of ankiNotes) {
-    await insertFlashcard(note);
-  }
+  // console.log("Inserting notes into Anki");
+  // for (const note of ankiNotes) {
+  //   await insertFlashcard(note);
+  // }
 
-  fs.writeFileSync(LAST_RUN_FILE, new Date().toISOString());
-  console.log("Done");
+  // fs.writeFileSync(LAST_RUN_FILE, new Date().toISOString());
+  // console.log("Done");
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
