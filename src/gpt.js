@@ -10,9 +10,11 @@ You are a helpful assistant. User's provide their annotations from books and art
 
 The output for each annotation should include the URI and title of the input item it is generated from. In most cases, each annotation will have a corresponding flashcard, note, or definition in the output.
 
-If the annotation highlights a single word, it is likely that the user is expecting a definition note. A definition note includes the word, its definition, and some example sentences.
+If the annotation highlights a single word and has no note, convert it into a definition item. The word should be unconjugated and any punctuation removed. A definition item includes the word, its definition, and some example sentences.
 
-If the user note includes one or more lines formatted like "Q: ... \nA: ...", create a flashcard note that exactly matches each "Q: ... \nA: ..." part. If the answer part is left blank, empty, or the note ends after the question, it's up to you to generate an appropriate answer for the flashcard. A safe default is to include the highlighted passage as the answer, but if there's a more appropriate answer you can confidently provide, you should do that.
+If the annotation highlights several words and has no note, convert it into a highlight item. A highlight item includes the highlighted passage, the title, and the author.
+
+If the user note includes one or more lines formatted like "Q: ... <br>A: ...", create a flashcard note that exactly matches each "Q: ... <br>A: ..." part. If the answer part is left blank, empty, or the note ends after the question, it's up to you to generate an appropriate answer for the flashcard. A safe default is to include the highlighted passage as the answer, but if there's a more appropriate answer you can confidently provide, you should do that.
 
 There are some shorthands the user can use in a note to specify that you should generate a flashcard with a question and answer you've written yourself, based on the passage and content. These shorthands are: "q" and "ankify". 
 
@@ -24,66 +26,69 @@ Sometimes, the user note might just be a thought, a question, a musing, or a not
 
 ### Input
 
-passage: "It is difficult for a man to understand something when his salary depends on his not understanding it."
-title: "The Great Gatsby"
+passage: It is difficult for a man to understand something when his salary depends on his not understanding it.
+title: The Great Gatsby
 author: F. Scott Fitzgerald
 uri: www.example.com/gatsby1
-note: "Q: What does this quote mean? \nA: "
+note: Q: What does this quote mean? <br>A:
 
-passage: "Whorls"
-title: "The Snail's Journey"
+passage: Whorls,
+title: The Snail's Journey
 author: Author Name
 uri: www.example.com/snail1
-note: "I saw this in a novel where it was used to describe the pattern on a snail's shell. Can you give a definition and examples?"
+note:
 
-passage: "Do not go gentle into that good night."
-title: "Do not go gentle into that good night"
+passage: Do not go gentle into that good night.
+title: Do not go gentle into that good night
 author: Dylan Thomas
 uri: www.example.com/thomas1
-note: "Q: What's the meaning of this line? \nA: \nAlso can you create a definition note for this? It feels profound but I'm not sure what it means."
+note:
 
-passage: "There are times when you must incur technical debt to meet a deadline or implement a thin slice of a feature. Try not to be in this position, but if the situation absolutely demands it, then go ahead. But (and this is a big but) you must track technical debt and pay it back quickly, or things go rapidly downhill. As soon as you make the decision to compromise, write a task card or log it in your issue-tracking system to ensure that it does not get forgotten."
-title: "97 Things Every Programmer Should Know"
+passage: There are times when you must incur technical debt to meet a deadline or implement a thin slice of a feature. Try not to be in this position, but if the situation absolutely demands it, then go ahead. But (and this is a big but) you must track technical debt and pay it back quickly, or things go rapidly downhill. As soon as you make the decision to compromise, write a task card or log it in your issue-tracking system to ensure that it does not get forgotten.
+title: 97 Things Every Programmer Should Know
 author: Kevlin Henney
 uri: www.example.com/97things1
-note: "i should do tgis at ideaflow. Make cards for creating tests. Refactors. Etc"
+note: i should do tgis at ideaflow. Make cards for creating tests. Refactors. Etc
+
+passage: a generic symbol had formed which encompassed all the strangers in the scape
+title: Diaspora"
+author: Greg Egan
+uri: kindle://book?action=open&asin=B00H6STTU6&location=undefined
+note: theres something interesting here<br>creating a symbol for something, and tying it to objects or assigning props<br>but not giving it a name yet <br>i think thats similar to what ive been gesturing at with the Page concept i was considering for ideaflow.
 
 ### Output
 
 type: flashcard
 uri: www.example.com/gatsby1
-title: "The Great Gatsby"
+title: The Great Gatsby
 q: What does this quote mean?
 a: This quote suggests that it is challenging for people to understand or acknowledge truths that would threaten their livelihood or financial interests.
 
 type: definition
 uri: www.example.com/snail1
 title: "The Snail's Journey"
-word: Whorls
+word: Whorl
 definition: Circular patterns or spirals found in nature or created artificially.
 examples:
-- The {whorls} of the galaxy are a mesmerizing sight in the night sky.
-- The snail's shell had intricate {whorls} and patterns all over it.
+- The {whorl} of the galaxy are a mesmerizing sight in the night sky.
+- The snail's shell had intricate {whorl} and patterns all over it.
 
-type: flashcard
+type: highlight
 uri: www.example.com/thomas1
 title: "Do not go gentle into that good night"
-q: What's the meaning of this line?
-q: This line encourages one to resist death and to fight against it with all their might.
-
-type: definition
-uri: www.example.com/thomas1
-title: "Do not go gentle into that good night"
-word: "Do not go gentle into that good night."
-definition: This phrase encourages one to resist death and fight against it with all their might.
-examples:
-- He lived his life by the motto, {Do not go gentle into that good night}, fighting every adversity that came his way.
-- Even in the face of terminal illness, she embodied the phrase {Do not go gentle into that good night}, living her last days with the same passion and zest as always.
+passage: Do not go gentle into that good night.
 
 type: todo
 uri: www.example.com/97things1
 title: "97 Things Every Programmer Should Know"
 description: Create tickets to pay back technical debt (tests, refactors, etc) at IdeaFlow.
+
+type: note
+passage: a generic symbol had formed which encompassed all the strangers in the scape,
+note: theres something interesting here<br>creating a symbol for something, and tying it to objects or assigning props<br>but not giving it a name yet <br>i think thats similar to what ive been gesturing at with the Page concept i was considering for ideaflow.
+title: Diaspora
+author: Greg Egan
+uri: kindle://book?action=open&asin=B00H6STTU6&location=undefined
 
 `.trim();
 
@@ -93,19 +98,21 @@ const configuration = new Configuration({
 const openai = new OpenAIApi(configuration);
 
 export async function annotationsToItems(annotations) {
+  const input = annotationsToGPTInput(annotations);
   const completion = await openai.createChatCompletion({
     model: "gpt-3.5-turbo",
     messages: [
       { role: "system", content: systemPrompt },
-      { role: "user", content: annotationToGPTInput(annotations) },
+      { role: "user", content: input },
     ],
   });
-  const response = completion.data.choices[0].message?.content || "";
-  console.log("GPT response:", response);
-  return gptOutputToItems(response);
+  const output = completion.data.choices[0].message?.content || "";
+  console.log("GPT input:", input);
+  console.log("GPT output:", output);
+  return gptOutputToItems(output);
 }
 
-function annotationToGPTInput(annotations) {
+function annotationsToGPTInput(annotations) {
   return annotations
     .map((a) => {
       return Object.entries(a)
@@ -140,7 +147,10 @@ function gptOutputToItems(outputText) {
         }
         parsedItem[key] = examples;
       } else {
-        parsedItem[key] = line.slice(match.index + match[0].length);
+        parsedItem[key] = line
+          .slice(match.index + match[0].length)
+          .trim()
+          .replace(/<br>/g, "\n");
       }
       i++;
     }
