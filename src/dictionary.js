@@ -8,6 +8,7 @@ const configuration = new Configuration({
 const openai = new OpenAIApi(configuration);
 
 export async function getDefinitions(words) {
+  if (words.length === 0) return [];
   const wordList = words.map((w) => `- ${w}`).join("\n");
   const prompt = `
 ## Instruction
